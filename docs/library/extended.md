@@ -1,6 +1,6 @@
 # 数値・配列・整列コンテナと順列
 
-以下はすべて標準で読み込まれます。署名の一覧は[APIリファレンス](api.md)で検索できます。動作例は[standard_library.rusk](https://github.com/shogo314/rusk_b_15/blob/main/examples/beta11/standard_library.rusk)にあります。
+以下はすべて標準で読み込まれます。署名の一覧は[APIリファレンス](api.md)で検索できます。動作例は[standard_library.rusk](https://github.com/shogo314/rusk_b_16/blob/main/examples/beta11/standard_library.rusk)にあります。
 
 ## 順列
 

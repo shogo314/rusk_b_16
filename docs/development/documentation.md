@@ -50,4 +50,4 @@ cargo test --locked --test documentation --test extern_generics --test api
 
 `.github/workflows/docs.yml`が文書、標準ライブラリ、処理系などの変更を受けてAPIの掲載例とstrictビルドを検証します。mainのビルド結果はGitHub Pagesへ公開します。生成したAPIからは、ビルド対象のコミットの定義行へリンクします。手動実行による再公開も可能です。
 
-GitHub PagesのSourceはGitHub Actionsに設定します。公開先は[Rusk](https://shogo314.github.io/rusk_b_15/)です。文書の編集・ローカルビルドと、mainへのpushによる公開は別の操作です。
+GitHub PagesのSourceはGitHub Actionsに設定します。公開先は[Rusk](https://shogo314.github.io/rusk_b_16/)です。文書の編集・ローカルビルドと、mainへのpushによる公開は別の操作です。

@@ -162,7 +162,7 @@ Unitの`value_call`はC++で`void`を返す。標準宣言の`lower`があれば
 
 関数参照を含む具体型は512個、宣言依存は深さ128・処理量16,384を上限とする。マーカーの構文・型は未使用の宣言でも検査し、具体化時の不足する操作や宣言依存の診断には要求元の位置も付ける。生成する型別名や関数名の綴りは公開ABIではない。任意のC++名・断片の依存は推測せず、C++テンプレートの定義やincludeは同じ規則で宣言側で用意する。
 
-[実行例](https://github.com/shogo314/rusk_b_15/blob/main/examples/beta08/native_type_function_references.rusk)は、構造体・入れ子の型・同じC++型の別の論理型・Unitの後処理を含む。
+[実行例](https://github.com/shogo314/rusk_b_16/blob/main/examples/beta08/native_type_function_references.rusk)は、構造体・入れ子の型・同じC++型の別の論理型・Unitの後処理を含む。
 
 ## 捕捉を持つコールバック
 
@@ -183,7 +183,7 @@ wt apply(add,2),total,apply((n:Int)=>"ok",1);
 
 関数値から別の関数値を返す場合も、それぞれの型情報から型引数を補える。型引数が増えなくなるまで照合を繰り返すので、参照マーカーの記述順には依存しない。これは明示した`invoke`参照による型の要件であり、任意のC++本体やRusk関数本体から一般の型要件を推論する機能ではない。文字列等に参照記法そのものを残す場合は、同じ規則で`@@{...}`でエスケープする。
 
-関数値の捕捉環境の所有・コピーには既存の仕組みを使う。[外部型に関数値を保持する例](https://github.com/shogo314/rusk_b_15/blob/main/examples/beta08/extern_callback_lifetime.rusk)では、ブロック内の文字列の要素を捕捉し、外側で関数値を取得・コピー・呼び出す。元の文字列の共有先の寿命を維持し、コピーした捕捉値は分離する。
+関数値の捕捉環境の所有・コピーには既存の仕組みを使う。[外部型に関数値を保持する例](https://github.com/shogo314/rusk_b_16/blob/main/examples/beta08/extern_callback_lifetime.rusk)では、ブロック内の文字列の要素を捕捉し、外側で関数値を取得・コピー・呼び出す。元の文字列の共有先の寿命を維持し、コピーした捕捉値は分離する。
 
 externによるコールバックの呼び出し回数や他の効果は保守的に扱う。作成者がコールバック引数に契約を指定する場合、コールバックの実行に伴う変更・保持や、返却値が捕捉値を共有する場合も保証の範囲に含める。コールバック内での実行時エラーは、通常のRuskの位置情報を保持する。
 
@@ -208,7 +208,7 @@ wt original, result;
 - `fixed` はC++実装内の仮引数の共有先を結び直さないという作成者の保証として受け付け、`rebindable`は結び直しを許す。これらの注釈だけの場合、共有値の変更・保持・返却は未知として解析する。重複・矛盾の検査は通常のRusk関数と同じ。
 - 契約はC++の `const`、引数の所有規約、戻り値の新規割り当てを指定しない。 `readonly`・`mutable`・`noescape`・`escape` と、標準ライブラリ内部の `effects`・`aliases`・`derive` との併用はできない。
 
-ジェネリックexternでは、具体化されたC++本体とそこから呼ぶ関数が契約を守る必要がある。具体化やコールバックを含む例は [extern_contracts.rusk](https://github.com/shogo314/rusk_b_15/blob/main/examples/beta09/extern_contracts.rusk) を参照する。
+ジェネリックexternでは、具体化されたC++本体とそこから呼ぶ関数が契約を守る必要がある。具体化やコールバックを含む例は [extern_contracts.rusk](https://github.com/shogo314/rusk_b_16/blob/main/examples/beta09/extern_contracts.rusk) を参照する。
 
 ## Unitの呼び出しと保存する値のABI
 
@@ -484,7 +484,7 @@ Vec・Dict/Setの反復子はowner、Mapped/Filteredはsource・callback・cache
 
 標準preludeは`lib/prelude.rusk`の通常のincludeで列挙し、C++断片は`lib/runtime/prelude.rusk`から同じプロパティで読み込む。`lib/`内のRuskとC++資源のカタログをビルド時に生成する。カタログは実行ファイルへの梱包に使い、読込順や型・関数名による操作登録、信頼判定は決めない。標準・利用者の由来はSourceの属性で渡し、ファイル名や埋込資源風の表示を権限とはしない。埋込資源が不足した場合に実ファイルへ暗黙にフォールバックしない。
 
-[ファイル参照と依存の例](https://github.com/shogo314/rusk_b_15/blob/main/examples/beta08/runtime_resources/example.rusk)は、辞書順と逆の依存を持つ利用者シンボルと標準の遅延反復を組み合わせる。相対パス・重複include・依存ファイル一覧・リポジトリ外からの単独コンパイル・原文のマーカーの保持・宣言の信頼境界も検証する。
+[ファイル参照と依存の例](https://github.com/shogo314/rusk_b_16/blob/main/examples/beta08/runtime_resources/example.rusk)は、辞書順と逆の依存を持つ利用者シンボルと標準の遅延反復を組み合わせる。相対パス・重複include・依存ファイル一覧・リポジトリ外からの単独コンパイル・原文のマーカーの保持・宣言の信頼境界も検証する。
 
 ## 短絡演算から通常のenum操作へ接続する
 
@@ -496,12 +496,12 @@ Vec・Dict/Setの反復子はowner、Mapped/Filteredはsource・callback・cache
 
 期待される結果型から、値取得の通常の署名を通して左辺の型引数を補う。複数の候補がある場合は、左辺を作る関数・enumコンストラクタの宣言された結果型と整合する文脈だけを用いる。文脈を調べる間に左辺や右辺を実行しない。標準のNoneと別の空variant・空値構築関数が共存する場合も検証する。完全な双方向型推論を追加したものではなく、通常の宣言と型注釈の規則を使う。
 
-[利用者の操作の例](https://github.com/shogo314/rusk_b_15/blob/main/examples/beta08/coalesce_protocols.rusk)は、短絡・共有・期待型・文字参照・構造体のvalueを確認する。標準由来の別名のenumでは、variant 1のpayload 1を取得して両モードで実行し、nullableな配置やOptionの並び順への依存がないことを検証する。
+[利用者の操作の例](https://github.com/shogo314/rusk_b_16/blob/main/examples/beta08/coalesce_protocols.rusk)は、短絡・共有・期待型・文字参照・構造体のvalueを確認する。標準由来の別名のenumでは、variant 1のpayload 1を取得して両モードで実行し、nullableな配置やOptionの並び順への依存がないことを検証する。
 
 ## bare値のゼロ引数構築を宣言する
 
 具体・ジェネリックexternに`implicit_call:"true"`を付けると、bare名を参照するたびにゼロ引数で呼び出す。標準の`None`もこの宣言を使う。引数がない通常のexternだけに指定でき、不正な値・引数付き・導出テンプレートとの併用は未使用でも宣言位置で拒否する。関数名の系列にbare呼び出しの規約を登録し、その系列の通常のゼロ引数候補を期待型とともに解決する。値のキャッシュや初回だけの呼び出しは行わない。
 
-[別名の実行例](https://github.com/shogo314/rusk_b_15/blob/main/examples/beta08/implicit_calls.rusk)では、利用者のVacantから期待型に合うOptionを構築し、tickの副作用が参照ごとに実行されることを確認する。型引数が決まらない場合は通常の推論エラーとし、ローカル変数・捕捉した変数があればそちらを優先する。指定のないRusk関数・externのbare参照は通常の関数値として扱う。修飾したenum variantの既存の構築構文とは別に扱う。
+[別名の実行例](https://github.com/shogo314/rusk_b_16/blob/main/examples/beta08/implicit_calls.rusk)では、利用者のVacantから期待型に合うOptionを構築し、tickの副作用が参照ごとに実行されることを確認する。型引数が決まらない場合は通常の推論エラーとし、ローカル変数・捕捉した変数があればそちらを優先する。指定のないRusk関数・externのbare参照は通常の関数値として扱う。修飾したenum variantの既存の構築構文とは別に扱う。
 
 利用者のexternにも指定できるが、これは呼び出しの記法だけを決める情報である。Sourceの由来・共有ABI・未知の効果を変更せず、effects・aliases・lower等の標準専用情報を指定する権限も与えない。

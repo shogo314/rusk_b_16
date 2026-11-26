@@ -1,8 +1,8 @@
 site_name: Rusk
 site_description: 競技プログラミング向け言語 Rusk の仕様・ライブラリ・開発ガイド
-site_url: https://shogo314.github.io/rusk_b_15/
-repo_url: https://github.com/shogo314/rusk_b_15
-repo_name: shogo314/rusk_b_15
+site_url: https://shogo314.github.io/rusk_b_16/
+repo_url: https://github.com/shogo314/rusk_b_16
+repo_name: shogo314/rusk_b_16
 edit_uri: edit/main/docs/
 strict: true
 theme:

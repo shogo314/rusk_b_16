@@ -36,7 +36,7 @@ wt total;
 
 ## ドキュメント
 
-- [公開サイト](https://shogo314.github.io/rusk_b_15/)／[ドキュメントの入口](docs/index.md)
+- [公開サイト](https://shogo314.github.io/rusk_b_16/)／[ドキュメントの入口](docs/index.md)
 - [チュートリアル](docs/getting-started/tutorial.md)／[型の一覧](docs/reference/types.md)／[演算子](docs/reference/operators.md)／[言語リファレンス](docs/reference/index.md)／[標準ライブラリ](docs/library/index.md)
 - [ソースの整形](docs/getting-started/formatting.md)／[文書コメント](docs/development/doc-comments.md)
 - [開発ガイド](docs/development/index.md)／[変換パイプライン](docs/development/pipeline.md)／[externの規則](docs/development/extern.md)

@@ -1,9 +1,9 @@
 [package]
 name = "rusk"
-version = "0.1.0-beta.15"
+version = "0.1.0-beta.16"
 edition = "2024"
 build = "build.rs"
-repository = "https://github.com/shogo314/rusk_b_15"
+repository = "https://github.com/shogo314/rusk_b_16"
 
 [dependencies]
 clap = { version = "4.6", features = ["derive"] }
