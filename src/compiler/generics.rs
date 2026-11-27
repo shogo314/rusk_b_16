@@ -572,6 +572,7 @@ impl Compiler {
         let lookup_name = self.source_function_name(name);
         let lookup_base = self.source_function_name(base);
         let mut results = vec![];
+        let shape = CallArguments::positional(arguments.len());
         if base == name {
             results.extend(
                 self.functions
@@ -579,11 +580,13 @@ impl Compiler {
                     .enumerate()
                     .filter(|(i, f)| {
                         !self.generic_calls.contains_key(i)
-                            && !self.keyword_parameters.contains_key(i)
                             && self.aggregate_candidate(*i, arguments)
                             && scopes.contains(&f.scope)
                             && f.name.text == lookup_name
-                            && f.params.len() == arguments.len()
+                            && shape.accepts_positional(
+                                f.params.len(),
+                                self.keyword_parameters.get(i).into_iter().flatten(),
+                            )
                             && f.params
                                 .iter()
                                 .zip(arguments)
@@ -593,20 +596,16 @@ impl Compiler {
             );
         }
         for f in &self.generic_functions {
-            if !scopes.contains(&f.scope)
-                || f.name.text != lookup_base
-                || f.arguments.len() != arguments.len()
-                || f.arguments.iter().any(|(name, _)| name.keyword.is_some())
-            {
+            if !scopes.contains(&f.scope) || f.name.text != lookup_base {
                 continue;
             }
             let Some(mut bindings) = explicit_bindings(name, &f.parameters) else {
                 continue;
             };
-            if f.arguments
-                .iter()
-                .zip(arguments)
-                .all(|((_, pattern), ty)| unify(&pattern.text, ty, &f.parameters, &mut bindings))
+            if shape.accepts_positional(f.arguments.len(), f.arguments.iter().map(|(name, _)| name))
+                && f.arguments.iter().zip(arguments).all(|((_, pattern), ty)| {
+                    unify(&pattern.text, ty, &f.parameters, &mut bindings)
+                })
                 && f.infer_requirements(self, depth + 1, budget, expected, &mut bindings)?
                 && f.parameters.iter().all(|p| bindings.contains_key(&p.text))
             {

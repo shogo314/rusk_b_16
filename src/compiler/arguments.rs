@@ -143,6 +143,33 @@ impl<'a> CallArguments<'a> {
         self.positional + self.keywords.len()
     }
 
+    pub(super) fn accepts_positional(
+        &self,
+        count: usize,
+        mut names: impl Iterator<Item = &'a DeclaredName>,
+    ) -> bool {
+        if self.positional > count {
+            return false;
+        }
+        if self.positional == count {
+            return names.all(|name| name.keyword.is_none());
+        }
+        names
+            .by_ref()
+            .take(self.positional)
+            .all(|name| name.keyword.is_none())
+            && names.next().is_some_and(|name| {
+                name.keyword
+                    .as_ref()
+                    .is_some_and(|keyword| keyword.default.is_some())
+            })
+            && names.all(|name| {
+                name.keyword
+                    .as_ref()
+                    .is_some_and(|keyword| keyword.default.is_some())
+            })
+    }
+
     pub(super) fn slots<'b>(
         &'b self,
         count: usize,
@@ -230,6 +257,94 @@ impl Compiler {
         };
         let values = self.complete_call_arguments(function, slots, values, span)?;
         self.emit_call(function, values, span)
+    }
+
+    pub(super) fn resolve_positional_defaults(
+        &mut self,
+        name: &str,
+        arguments: &[Value],
+        expected: Option<&str>,
+        span: &Span,
+    ) -> Result<Option<usize>, String> {
+        let shape = CallArguments::positional(arguments.len());
+        let Some((target, slots)) =
+            self.resolve_shaped_call(name, &shape, arguments, expected, span)?
+        else {
+            return Ok(None);
+        };
+        if self.functions[target].params.len() == arguments.len() {
+            return Ok(Some(target));
+        }
+
+        // A typed native reference has a positional ABI. A Rusk forwarding
+        // body supplies the missing defaults before entering the full ABI.
+        let parameters: Vec<_> = arguments.iter().map(|value| value.ty.clone()).collect();
+        let key = (target, parameters.clone());
+        if let Some(id) = self.positional_default_calls.get(&key) {
+            return Ok(Some(*id));
+        }
+        let index = self.functions.len();
+        let function = &self.functions[target];
+        let result = function.result.clone();
+        self.functions.push(Function {
+            scope: function.scope,
+            name: Name {
+                text: format!("$positional_default_{index}"),
+                span: span.clone(),
+                constant: None,
+            },
+            params: parameters,
+            result: result.clone(),
+            cpp: format!("rusk_positional_default_{index}"),
+            code: String::new(),
+            body: Some((vec![], Box::new(Stmt::Block(vec![], None)))),
+            origin: Origin::Generated,
+            checked: None,
+        });
+        self.positional_default_calls.insert(key, index);
+        self.complete_forwarding_body(index, target, slots, 0, &result, span)?;
+        Ok(Some(index))
+    }
+
+    pub(super) fn complete_forwarding_body(
+        &mut self,
+        index: usize,
+        target: usize,
+        slots: Vec<usize>,
+        offset: usize,
+        result: &str,
+        span: &Span,
+    ) -> Result<(), String> {
+        let (checked, completed) = self.with_function_context(
+            FunctionContext::function(index, result.into()),
+            |compiler| {
+                let values = compiler.functions[index]
+                    .params
+                    .iter()
+                    .enumerate()
+                    .skip(offset)
+                    .map(|(i, ty)| Value {
+                        id: ValueId::Parameter(i),
+                        ty: ty.clone(),
+                    })
+                    .collect();
+                let values = compiler.complete_call_arguments(target, slots, values, span)?;
+                let value = compiler.emit_call(target, values, span)?;
+                for instruction in &mut compiler.context.body.instructions {
+                    if let Instruction::Call(call) = instruction {
+                        call.inherit_location = true;
+                    }
+                }
+                compiler.context.body.push(Instruction::Return {
+                    value: (access_types::underlying(result) != "Unit").then_some(value),
+                    span: Some(span.clone()),
+                });
+                Ok::<_, String>(())
+            },
+        );
+        checked?;
+        self.functions[index].checked = Some(completed.body);
+        Ok(())
     }
 
     pub(super) fn complete_call_arguments(

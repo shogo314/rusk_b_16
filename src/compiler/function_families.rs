@@ -281,33 +281,7 @@ impl Compiler {
             origin: Origin::Generated,
             checked: None,
         });
-        let (checked, completed) = self.with_function_context(
-            FunctionContext::function(index, result.clone()),
-            |compiler| {
-                let values = parameters
-                    .iter()
-                    .enumerate()
-                    .map(|(i, ty)| Value {
-                        id: ValueId::Parameter(i + 1),
-                        ty: ty.clone(),
-                    })
-                    .collect();
-                let values = compiler.complete_call_arguments(target, slots, values, span)?;
-                let value = compiler.emit_call(target, values, span)?;
-                for instruction in &mut compiler.context.body.instructions {
-                    if let Instruction::Call(call) = instruction {
-                        call.inherit_location = true;
-                    }
-                }
-                compiler.context.body.push(Instruction::Return {
-                    value: (access_types::underlying(&result) != "Unit").then_some(value),
-                    span: Some(span.clone()),
-                });
-                Ok::<_, String>(())
-            },
-        );
-        checked?;
-        self.functions[index].checked = Some(completed.body);
+        self.complete_forwarding_body(index, target, slots, 1, &result, span)?;
         self.environments
             .closures
             .insert(index, local_captures::ClosureLayout::new(ty.into(), 0));

@@ -130,6 +130,7 @@ pub struct Compiler {
     keyword_parameters: BTreeMap<usize, Vec<DeclaredName>>,
     default_function_counter: usize,
     default_functions: BTreeMap<usize, BTreeSet<usize>>,
+    positional_default_calls: BTreeMap<(usize, Vec<String>), usize>,
     native_info: BTreeMap<usize, native_info::NativeFunctionInfo>,
     native_effect_queries: BTreeSet<(usize, crate::analysis::effects::Query)>,
     native_function_requests: BTreeMap<usize, crate::native::NativeRequests>,
@@ -442,7 +443,12 @@ impl Compiler {
         expected: Option<&str>,
         span: &Span,
     ) -> Result<Option<usize>, String> {
-        if let Some(id) = self.resolve(name, args, expected, span)? {
+        let resolved = if self.has_keyword_candidates(name) {
+            self.resolve_positional_defaults(name, args, expected, span)?
+        } else {
+            self.resolve(name, args, expected, span)?
+        };
+        if let Some(id) = resolved {
             if name == "__cmp__" {
                 self.same("Ordering", &self.functions[id].result, span)?;
             } else if ordering::fallback(name).is_some() {

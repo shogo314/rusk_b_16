@@ -490,7 +490,11 @@ wt values.enumerate(1).to_vec();
 let iter := enumerate;
 wt iter(values).to_vec();
 wt iter(values, start: 2).to_vec();
+extern fn native_index<T>(source: Vec<T>) -> Enumerated<Iter<Vec<T>>, T> {
+    code: "Obj<@{Enumerated<Iter<Vec<T>>,T>}> @{fn}(Obj<@{Vec<T>}> source, Loc loc) { return @{call enumerate(Vec<T>)->Enumerated<Iter<Vec<T>>,T>}(source, loc); }",
+}
+wt native_index([4, 5]).to_vec();
 "#,
-        "0 3 1 4\n1 3 2 4\n1 3 2 4\n1 3 2 4\n0 3 1 4\n2 3 3 4\n",
+        "0 3 1 4\n1 3 2 4\n1 3 2 4\n1 3 2 4\n0 3 1 4\n2 3 3 4\n0 4 1 5\n",
     );
 }
