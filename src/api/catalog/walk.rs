@@ -244,7 +244,7 @@ impl<'a, F: FnMut(Entry)> Declarations<'a, F> {
                 self.expression(yes);
                 self.expression(no);
             }
-            ExprKind::Array(values) | ExprKind::Tuple(values) | ExprKind::Call(_, values) => {
+            ExprKind::Array(values) | ExprKind::Tuple(values) => {
                 for value in values {
                     self.expression(value);
                 }
@@ -254,10 +254,15 @@ impl<'a, F: FnMut(Entry)> Declarations<'a, F> {
                     self.expression(value);
                 }
             }
+            ExprKind::Call(_, args) => {
+                for arg in args {
+                    self.expression(&arg.value);
+                }
+            }
             ExprKind::Invoke(callee, args) => {
                 self.expression(callee);
                 for arg in args {
-                    self.expression(arg);
+                    self.expression(&arg.value);
                 }
             }
             ExprKind::Field(owner, _) | ExprKind::Unwrap(owner) | ExprKind::Unary(_, owner) => {

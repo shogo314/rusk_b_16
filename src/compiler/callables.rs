@@ -477,10 +477,38 @@ impl Compiler {
         self.expr(arg, hint)
     }
 
+    pub(super) fn call_argument_with_hints(
+        &mut self,
+        arg: &Expr,
+        hint: Option<&str>,
+        signature: Option<&Vec<String>>,
+    ) -> Result<Value, String> {
+        if !self.context.diverged
+            && let ExprKind::Lambda(parameters, body) = &arg.kind
+            && parameters.iter().any(|(_, ty)| ty.is_none())
+            && let Some(signature) = signature
+            && parameters.len() == signature.len()
+        {
+            return self.lambda_expression(parameters, body, &arg.span, Some(signature));
+        }
+        self.expr(arg, hint)
+    }
+
     pub(super) fn invoke_arguments(
         &mut self,
         callee: Value,
-        args: &[Expr],
+        args: &[Argument],
+        expected: Option<&str>,
+        span: &Span,
+    ) -> Result<Value, String> {
+        self.invoke_source_arguments(callee, Vec::new(), args, expected, span)
+    }
+
+    fn invoke_source_arguments(
+        &mut self,
+        callee: Value,
+        mut values: Vec<Value>,
+        args: &[Argument],
         expected: Option<&str>,
         span: &Span,
     ) -> Result<Value, String> {
@@ -488,17 +516,26 @@ impl Compiler {
             return Ok(Value::never());
         }
 
-        let mut values = vec![];
+        if let Some(family) = self.families.get(&callee.ty).cloned()
+            && (args.iter().any(|arg| arg.label.is_some())
+                || self.has_keyword_candidates(&family.name.text))
+        {
+            return self.invoke_shaped_family(callee, &family, values, args, expected, span);
+        }
+        let count = values.len() + args.len();
         for arg in args {
-            let hint = self.callable_argument_hint(&callee.ty, args.len(), &values, expected);
-            values.push(self.expr(arg, hint.as_deref())?);
+            if let Some(label) = &arg.label {
+                return Err(label.span.error("named arguments require a named function"));
+            }
+            let hint = self.callable_argument_hint(&callee.ty, count, &values, expected);
+            values.push(self.expr(&arg.value, hint.as_deref())?);
         }
         self.invoke(callee, values, expected, span)
     }
     pub(super) fn invoke_expression(
         &mut self,
         callee: &Expr,
-        args: &[Expr],
+        args: &[Argument],
         expected: Option<&str>,
         span: &Span,
     ) -> Result<Value, String> {
@@ -522,36 +559,9 @@ impl Compiler {
                     },
                     None,
                 )?;
-                let mut values = vec![owner];
-                for arg in args {
-                    let hint = self.callable_argument_hint(
-                        &function.ty,
-                        args.len() + 1,
-                        &values,
-                        expected,
-                    );
-                    values.push(self.expr(arg, hint.as_deref())?);
-                }
-                return self.invoke(function, values, expected, span);
+                return self.invoke_source_arguments(function, vec![owner], args, expected, span);
             }
-            let mut values = vec![owner];
-            for arg in args {
-                let hints = self.argument_hints(&name.text, args.len() + 1, &values, expected);
-                let hint = if hints.len() == 1 {
-                    hints.first().map(String::as_str)
-                } else {
-                    None
-                };
-                values.push(self.call_argument(
-                    arg,
-                    hint,
-                    &name.text,
-                    args.len() + 1,
-                    &values,
-                    expected,
-                )?);
-            }
-            return self.call(&name.text, values, expected, span);
+            return self.source_call(&name.text, vec![owner], args, expected, span);
         }
         let callee = self.expr(callee, None)?;
         self.invoke_arguments(callee, args, expected, span)

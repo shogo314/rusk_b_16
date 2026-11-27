@@ -82,6 +82,8 @@ pub(super) struct Parameter {
     binding: Option<&'static str>,
     access: Option<&'static str>,
     escape: Option<&'static str>,
+    named_only: bool,
+    default: Option<String>,
 }
 impl Parameter {
     fn new((name, ty): (DeclaredName, Name)) -> Self {
@@ -100,6 +102,21 @@ impl Parameter {
                 EscapeMode::Noescape => "noescape",
                 EscapeMode::Escape => "escape",
             }),
+            named_only: name.keyword.is_some(),
+            default: name
+                .keyword
+                .and_then(|keyword| keyword.default)
+                .map(|default| {
+                    use crate::frontend::ast::{ExprKind, ParameterDefault};
+                    match default {
+                        ParameterDefault::Expression(expr) => match expr.kind {
+                            ExprKind::Literal(_, value) => value,
+                            ExprKind::Var(name) => name.text,
+                            _ => "…".into(),
+                        },
+                        ParameterDefault::Function(_) => "…".into(),
+                    }
+                }),
         }
     }
     fn signature(&self) -> String {
@@ -114,6 +131,10 @@ impl Parameter {
         text.push_str(&self.name);
         text.push_str(": ");
         text.push_str(&type_text(&self.ty));
+        if let Some(default) = &self.default {
+            text.push_str(" = ");
+            text.push_str(default);
+        }
         text
     }
     fn json(&self) -> Value {
@@ -123,6 +144,8 @@ impl Parameter {
             "binding": self.binding,
             "access": self.access,
             "escape": self.escape,
+            "named_only": self.named_only,
+            "default": self.default,
         })
     }
 }
@@ -252,15 +275,18 @@ fn function(
     } else {
         "extern fn"
     };
+    let mut parameter_signatures = parameters
+        .iter()
+        .map(Parameter::signature)
+        .collect::<Vec<_>>();
+    if let Some(first_named) = parameters.iter().position(|parameter| parameter.named_only) {
+        parameter_signatures.insert(first_named, "*".into());
+    }
     let signature = format!(
         "{keyword} {}{}({}) -> {}",
         name.text,
         generic_suffix(&type_parameters),
-        parameters
-            .iter()
-            .map(Parameter::signature)
-            .collect::<Vec<_>>()
-            .join(", "),
+        parameter_signatures.join(", "),
         type_text(&result),
     );
     let mut entry = entry(origin, name, kind, signature, None);

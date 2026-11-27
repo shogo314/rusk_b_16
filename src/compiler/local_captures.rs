@@ -212,6 +212,13 @@ impl Compiler {
                     })
                     .map(|(_, &id)| id),
             );
+            let defaults: Vec<_> = targets
+                .iter()
+                .filter_map(|target| self.default_functions.get(target))
+                .flatten()
+                .copied()
+                .collect();
+            targets.extend(defaults);
         }
         let mut owners = BTreeMap::new();
         for (id, f) in self.functions.iter().enumerate() {
@@ -268,7 +275,13 @@ impl Compiler {
         // Concrete instances of one generic declaration share its snapshots.
         // Keep one environment slot for each snapshot so copying a callable
         // does not split that declaration's state between its instances.
+        let default_owners: BTreeMap<_, _> = self
+            .default_functions
+            .iter()
+            .flat_map(|(&owner, defaults)| defaults.iter().map(move |&default| (default, owner)))
+            .collect();
         let mut snapshots = BTreeMap::new();
+        let mut default_snapshots = BTreeMap::new();
         self.environments.aliases.clear();
         for (&id, local) in &self.environments.locals {
             for (index, (value, _)) in local.snapshots.iter().enumerate() {
@@ -277,6 +290,18 @@ impl Compiler {
                     index,
                 };
                 let canonical = *snapshots.entry(value.id.clone()).or_insert(key);
+                let owner = default_owners.get(&id).copied().unwrap_or(id);
+                let canonical = if self.default_functions.contains_key(&owner) {
+                    // A separately compiled default captures at the same
+                    // declaration as its body and must share a copied slot.
+                    let owner = &self.functions[owner];
+                    let name = &local.captures[index].0.text;
+                    *default_snapshots
+                        .entry((owner.scope, &owner.name.span, name))
+                        .or_insert(canonical)
+                } else {
+                    canonical
+                };
                 self.environments.aliases.insert(key, canonical);
             }
         }

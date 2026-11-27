@@ -7,7 +7,8 @@ impl Compiler {
         statements: &[Stmt],
     ) -> Result<Vec<Stmt>, String> {
         self.declare_local_type_names(statements)?;
-        let statements = self.scoped_statements(statements);
+        let statements = self.expand_parameter_defaults(statements);
+        let statements = self.scoped_statements(&statements);
         let origin = self
             .context
             .current_function
@@ -268,6 +269,18 @@ impl Compiler {
                             .as_ref()
                             .map(|r| r.text.clone())
                             .unwrap_or("Unit".into());
+                        if params
+                            .iter()
+                            .any(|(parameter, _)| parameter.keyword.is_some())
+                        {
+                            self.keyword_parameters.insert(
+                                self.functions.len(),
+                                params
+                                    .iter()
+                                    .map(|(parameter, _)| parameter.clone())
+                                    .collect(),
+                            );
+                        }
                         let params: Vec<_> = params.iter().map(|(_, t)| t.text.clone()).collect();
                         if let Stmt::Function(_, arguments, _, properties) = s {
                             let native = self.declared_native_effects(

@@ -162,7 +162,7 @@ impl Compiler {
             ExprKind::Call(name, args) => {
                 self.resolve_value_reference(name, bound);
                 for arg in args {
-                    self.resolve_expression_types(arg, bound);
+                    self.resolve_expression_types(&mut arg.value, bound);
                 }
             }
             ExprKind::Array(items) | ExprKind::Tuple(items) => {
@@ -204,7 +204,7 @@ impl Compiler {
             ExprKind::Invoke(value, args) => {
                 self.resolve_expression_types(value, bound);
                 for arg in args {
-                    self.resolve_expression_types(arg, bound);
+                    self.resolve_expression_types(&mut arg.value, bound);
                 }
             }
             ExprKind::CompareChain(value, rest) => {
@@ -271,8 +271,15 @@ impl Compiler {
                     .cloned()
                     .chain(parameters.iter().map(|p| p.text.clone()))
                     .collect();
-                for (_, ty) in arguments {
+                for (parameter, ty) in arguments {
                     self.resolve_type_reference(ty, &bound);
+                    if let Some(ParameterDefault::Expression(default)) = parameter
+                        .keyword
+                        .as_mut()
+                        .and_then(|keyword| keyword.default.as_mut())
+                    {
+                        self.resolve_expression_types(default, &bound);
+                    }
                 }
                 if let Some(result) = result {
                     self.resolve_type_reference(result, &bound);

@@ -1,5 +1,5 @@
 let data := [2, 4, 6];
-for (i, value) in data.enumerate(1) {
+for (i, value) in data.enumerate(start: 1) {
     value += i;
 }
 wt data;

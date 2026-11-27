@@ -89,6 +89,7 @@ fn expressions_patterns_and_comments_keep_their_syntax() {
     for input in [
         "enum E<T>{A(T),B}fn f<T>(x:T)->E<T>{return E::A(x);}match f(1){E::A(-1)=>{},E::A(x) if x>0=>{wt x;},E::B=>{}}",
         "let x:=if true{{1}}else{2};let f:=(x:Int)=>{let y:={x};y};wt f(x),[f(1);3];",
+        "fn f(a:Int,*,start:Int=a+1,enabled:Bool=true)->Int{return start;}wt f(2,enabled:false,start:3);",
         "let a:=[1,2];wt a.map(x=>x+1).fold(0,(total,x)=>total+x);match true{ok if (ok)=>{wt ok;}}",
         "fn f(x:Vec<Int>){for (i,v) in [(0,1)]{if v>0{continue;}else{break;}}while let Some(x)=None{wt x;}}",
         "let a:=1;let b:={a};(a,b)=(b,a);wt {a}+{b},({a},[b;2]);",

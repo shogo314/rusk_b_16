@@ -78,6 +78,8 @@ fn function_examples_keep_argument_and_capture_sharing() {
         include_str!("../docs/reference/functions.md"),
         &[
             ("", "25\n"),
+            ("", "3 2 1\n"),
+            ("", "7\n"),
             ("", "9 8 3\n"),
             ("", "7 abc\n"),
             ("", "1 2 2\n"),

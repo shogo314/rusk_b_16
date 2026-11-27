@@ -94,3 +94,131 @@ fn callable_errors_are_rusk_diagnostics() {
         assert!(!case.0.join("main.cpp").exists());
     }
 }
+
+#[test]
+fn named_arguments_evaluate_explicit_values_before_defaults() {
+    succeeds(
+        r#"
+fn score(trace: Vec<Int>, value: Int, *,
+         a: Int = stamp(trace, value), b: Int,
+         c: Int = stamp(trace, a + b), d: Int) -> Int {
+    return a + b + c + d;
+}
+fn stamp(trace: Vec<Int>, value: Int) -> Int {
+    trace.push_back(value);
+    return value;
+}
+let trace: Vec<Int> := [];
+wt score(trace, stamp(trace, 1), d: stamp(trace, 2), b: stamp(trace, 3));
+wt trace;
+trace.clear();
+wt trace.score(stamp(trace, 1), c: stamp(trace, 9), b: stamp(trace, 3),
+               a: stamp(trace, 5), d: stamp(trace, 2));
+wt trace;
+fn clip(values: Vec<Int>, *, end: Int = values.len()) -> Int { return end; }
+fn source(trace: Vec<Int>) -> Vec<Int> { trace.push_back(0); return [1, 2]; }
+trace.clear();
+wt clip(source(trace)), trace;
+"#,
+        "10\n1 2 3 1 4\n19\n1 9 3 5 2\n2 0\n",
+    );
+}
+
+#[test]
+fn named_defaults_use_definition_captures_and_callback_types() {
+    succeeds(
+        r#"
+fn apply<T, F>(value: T, *, callback: F) -> T { return callback(value); }
+wt apply(4, callback: x => x + 3);
+let use := apply;
+wt use(4, callback: x => x + 4);
+
+{
+    let offset := 3;
+    fn captured(base: Int, *, result: Int = base + offset) -> Int { return result; }
+    fn generic<T>(base: T, *, result: T = base + offset) -> T { return result; }
+    offset += 1;
+    {
+        let offset := 100;
+        let use := captured;
+        let poly := generic;
+        wt captured(2), generic(2), captured(2, result: offset), use(3), poly(4);
+    }
+}
+extern fn select_native<T>(x: T, *, value: T = x) -> T {
+    code: "@{return T} @{fn}([[maybe_unused]] Obj<@{T}> x, Obj<@{T}> value, Loc) { return @{finish T}(std::move(value)); }",
+}
+wt select_native(8), 8.select_native(value: 10);
+
+extern fn plain_native(*, value: Int = 6) -> Int {
+    cpp_name: "b16_plain_native",
+    code: "Obj<std::int64_t> b16_plain_native(Obj<std::int64_t> value, Loc) { return value; }",
+}
+fn choose(*, left: Int) -> Int { return left + 1; }
+fn choose(*, right: Int) -> Int { return right + 2; }
+wt plain_native(), plain_native(value: 9), choose(left: 5), choose(right: 5);
+fn borrowed(noescape source: Int, *, other: Int = source) -> Int { return other + 1; }
+wt borrowed(8);
+"#,
+        "7\n8\n6 6 100 7 8\n8 10\n6 9 6 7\n9\n",
+    );
+}
+
+#[test]
+fn named_call_diagnostics_report_argument_shape_and_ambiguity() {
+    let declaration = "fn f(x: Int, *, start: Int) -> Int { return x + start; }";
+    for (call, expected) in [
+        ("f(1);", "missing required named argument 'start'"),
+        ("f(1, stop: 2);", "unknown named argument 'stop'"),
+        (
+            "f(1, start: 2, start: 3);",
+            "duplicate named argument 'start'",
+        ),
+        (
+            "f(start: 2, 1);",
+            "positional argument follows a named argument",
+        ),
+        ("f(1, 2);", "no matching function 'f'"),
+        ("f(1, x: 2, start: 3);", "unknown named argument 'x'"),
+    ] {
+        let source = format!("{declaration}\n{call}");
+        let case = Case::new(&source);
+        for options in [&[][..], &["--no-opt"][..]] {
+            let result = case.compile_with_options(options);
+            assert!(!result.status.success());
+            let diagnostic = String::from_utf8_lossy(&result.stderr);
+            assert!(
+                diagnostic.contains("main.rusk:2:") && diagnostic.contains(expected),
+                "{diagnostic}"
+            );
+        }
+    }
+
+    let case = Case::new(
+        r#"
+fn f(x: Int, *, start: Int = 0) -> Int { return x + start; }
+fn f(x: Int, *, stop: Int = 0) -> Int { return x + stop; }
+wt f(1);
+"#,
+    );
+    let result = case.compile();
+    assert!(!result.status.success());
+    let diagnostic = String::from_utf8_lossy(&result.stderr);
+    assert!(diagnostic.contains("ambiguous"), "{diagnostic}");
+}
+
+#[test]
+fn copying_a_function_keeps_its_default_and_body_captures_shared() {
+    succeeds(
+        r#"
+{
+    let count := 0;
+    fn next(*, value: Int = (count += 1)) -> Int { return count + value; }
+    let f := next;
+    let g = f;
+    wt f(), g(), f(), g(), count;
+}
+"#,
+        "2 2 4 4 2\n",
+    );
+}

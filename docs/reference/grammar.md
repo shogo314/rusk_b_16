@@ -89,7 +89,10 @@ type_parameters = "<" type_parameter { "," type_parameter } ">" ;
 
 ```ebnf
 function_definition = "fn" identifier [ type_parameters ]
-                      "(" parameters ")" [ "->" type ] block ;
+                      "(" function_parameters ")" [ "->" type ] block ;
+function_parameters = [ parameter { "," parameter } [ "," named_parameters ] | named_parameters ] ;
+named_parameters    = "*" "," named_parameter { "," named_parameter } ;
+named_parameter     = parameter [ "=" expression ] ;
 parameters          = [ parameter { "," parameter } ] ;
 parameter_modifier  = variable_modifier | "noescape" | "escape" ;
 parameter           = { parameter_modifier } identifier ":" type ;
@@ -174,7 +177,9 @@ multiplication = unary { ("*" | "/" | "%") unary } ;
 unary      = ("+" | "-" | "!" | "~") unary | power ;
 power      = postfix [ "**" unary ] ;
 postfix    = primary { "[" expression "]"
-                    | "." identifier | "(" expression_list ")" | "?!" } ;
+                    | "." identifier | "(" arguments ")" | "?!" } ;
+arguments  = [ argument { "," argument } ] ;
+argument   = [ identifier ":" ] expression ;
 assignment_operator = ":=" | "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "<?=" | ">?=" ;
 comparison_operator = "==" | "!=" | "<" | "<=" | ">" | ">=" ;
 ```
@@ -238,7 +243,7 @@ exponent       = ( "e" | "E" ) [ "+" | "-" ] integer_literal ;
 
 ```ebnf
 extern_type     = "extern" "type" [ type_parameters ] type "{" properties "}" ;
-extern_function = "extern" "fn" identifier [ type_parameters ] "(" parameters ")"
+extern_function = "extern" "fn" identifier [ type_parameters ] "(" function_parameters ")"
                   [ "->" type ] "{" properties "}" ;
 extern_symbol   = "extern" "symbol" identifier "{" properties "}" ;
 properties      = { identifier ":" string_literal "," } ;

@@ -1,3 +1,4 @@
+use super::arguments::{ArgumentMismatch, CallArguments};
 use super::tuples::type_parts;
 use super::*;
 
@@ -578,6 +579,7 @@ impl Compiler {
                     .enumerate()
                     .filter(|(i, f)| {
                         !self.generic_calls.contains_key(i)
+                            && !self.keyword_parameters.contains_key(i)
                             && self.aggregate_candidate(*i, arguments)
                             && scopes.contains(&f.scope)
                             && f.name.text == lookup_name
@@ -594,6 +596,7 @@ impl Compiler {
             if !scopes.contains(&f.scope)
                 || f.name.text != lookup_base
                 || f.arguments.len() != arguments.len()
+                || f.arguments.iter().any(|(name, _)| name.keyword.is_some())
             {
                 continue;
             }
@@ -654,20 +657,24 @@ impl Compiler {
     // A contextual receiver type must also be compatible with the expression
     // that constructs it. Inspect declared signatures without evaluating code.
     pub(super) fn expression_accepts_hint(&self, expression: &Expr, expected: &str) -> bool {
-        let (name, count) = match &expression.kind {
-            ExprKind::Call(name, args) => (name.text.as_str(), args.len()),
+        let (name, shape) = match &expression.kind {
+            ExprKind::Call(name, args) => {
+                let Ok(shape) = CallArguments::new(0, args) else {
+                    return false;
+                };
+                (name.text.as_str(), shape)
+            }
             ExprKind::Var(name) if self.local_variable(&name.text).is_none() => {
-                (name.text.as_str(), 0)
+                (name.text.as_str(), CallArguments::positional(0))
             }
             _ => return true,
         };
         if let Some((owner, variant)) = name.rsplit_once("::") {
             let (base, args) = type_parts(owner).unwrap_or((owner, vec![]));
             if let Some(definition) = self.enum_definitions.get(base)
-                && definition
-                    .variants
-                    .iter()
-                    .any(|(v, fields)| v.text == variant && fields.len() == count)
+                && definition.variants.iter().any(|(v, fields)| {
+                    v.text == variant && !shape.has_keywords() && fields.len() == shape.len()
+                })
             {
                 let pattern = if definition.parameters.is_empty() {
                     base.to_string()
@@ -706,7 +713,12 @@ impl Compiler {
         for (id, function) in self.functions.iter().enumerate() {
             if function.name.text == lookup_name
                 && scopes.contains(&function.scope)
-                && function.params.len() == count
+                && shape
+                    .slots(
+                        function.params.len(),
+                        self.keyword_parameters.get(&id).into_iter().flatten(),
+                    )
+                    .is_ok()
                 && !self.generic_calls.contains_key(&id)
             {
                 found = true;
@@ -718,7 +730,12 @@ impl Compiler {
         for function in &self.generic_functions {
             if !scopes.contains(&function.scope)
                 || function.name.text != lookup_base
-                || function.arguments.len() != count
+                || shape
+                    .slots(
+                        function.arguments.len(),
+                        function.arguments.iter().map(|(name, _)| name),
+                    )
+                    .is_err()
             {
                 continue;
             }
@@ -859,6 +876,271 @@ impl Compiler {
         probe.lambda_probe?.signature
     }
 
+    pub(super) fn has_keyword_candidates(&self, name: &str) -> bool {
+        let lookup = self.source_function_name(name);
+        let base = type_parts(&lookup).map_or(lookup.as_ref(), |(base, _)| base);
+        self.keyword_parameters.keys().any(|id| {
+            !self.generic_calls.contains_key(id) && self.functions[*id].name.text == lookup
+        }) || self.generic_functions.iter().any(|f| {
+            f.name.text == base && f.arguments.iter().any(|(name, _)| name.keyword.is_some())
+        })
+    }
+
+    fn shaped_candidates<'a>(
+        &'a self,
+        name: &str,
+        values: &[Value],
+    ) -> (
+        impl Iterator<Item = (usize, &'a Function)>,
+        impl Iterator<Item = (usize, &'a GenericFunction)>,
+    ) {
+        let arguments: Vec<_> = values.iter().map(|value| value.ty.clone()).collect();
+        let scopes = self.function_scopes(name, &arguments);
+        let concrete_scopes = scopes.clone();
+        let lookup = self.source_function_name(name).into_owned();
+        let base = type_parts(&lookup)
+            .map_or(lookup.as_str(), |(base, _)| base)
+            .to_string();
+        let explicit = type_parts(name).is_some();
+        let concrete = self.functions.iter().enumerate().filter(move |(id, f)| {
+            !explicit
+                && !self.generic_calls.contains_key(id)
+                && self.aggregate_candidate(*id, &arguments)
+                && concrete_scopes.contains(&f.scope)
+                && f.name.text == lookup
+        });
+        let generic = self
+            .generic_functions
+            .iter()
+            .enumerate()
+            .filter(move |(_, f)| scopes.contains(&f.scope) && f.name.text == base);
+        (concrete, generic)
+    }
+
+    fn shaped_generic_bindings(
+        &self,
+        function: &GenericFunction,
+        name: &str,
+        slots: &[usize],
+        values: &[Value],
+        expected: Option<&str>,
+    ) -> Result<Option<BTreeMap<String, String>>, ()> {
+        let Some(mut bindings) = explicit_bindings(name, &function.parameters) else {
+            return Ok(None);
+        };
+        let base = type_parts(name).map_or(name, |(base, _)| base);
+        if return_selected(base)
+            && let Some(result) = expected
+            && !unify(
+                function
+                    .result
+                    .as_ref()
+                    .map_or("Unit", |ty| ty.text.as_str()),
+                result,
+                &function.parameters,
+                &mut bindings,
+            )
+        {
+            return Ok(None);
+        }
+        if !slots.iter().zip(values).all(|(&slot, value)| {
+            unify(
+                &function.arguments[slot].1.text,
+                &value.ty,
+                &function.parameters,
+                &mut bindings,
+            )
+        }) || !function.infer_requirements(
+            self,
+            0,
+            &mut QueryBudget::new(),
+            expected,
+            &mut bindings,
+        )? {
+            return Ok(None);
+        }
+        Ok(Some(bindings))
+    }
+
+    pub(super) fn shaped_argument_hints(
+        &self,
+        name: &str,
+        shape: &CallArguments<'_>,
+        values: &[Value],
+        expected: Option<&str>,
+        needs_callback: bool,
+    ) -> (BTreeSet<String>, BTreeSet<Vec<String>>) {
+        let (concrete, generic) = self.shaped_candidates(name, values);
+        let mut types = BTreeSet::new();
+        let mut callbacks = BTreeSet::new();
+        for (id, function) in concrete {
+            let names = self.keyword_parameters.get(&id).into_iter().flatten();
+            if let Ok(slots) = shape.slots(function.params.len(), names)
+                && slots
+                    .iter()
+                    .zip(values)
+                    .all(|(&slot, value)| access_types::same(&function.params[slot], &value.ty))
+            {
+                types.insert(function.params[slots[values.len()]].clone());
+            }
+        }
+        for (id, function) in generic {
+            let Ok(slots) = shape.slots(
+                function.arguments.len(),
+                function.arguments.iter().map(|(name, _)| name),
+            ) else {
+                continue;
+            };
+            let Ok(Some(bindings)) =
+                self.shaped_generic_bindings(function, name, &slots, values, expected)
+            else {
+                continue;
+            };
+            let ty = &function.arguments[slots[values.len()]].1.text;
+            if bound(ty, &function.parameters, &bindings) {
+                types.insert(substitute(ty, &bindings));
+            }
+            if !needs_callback {
+                continue;
+            }
+            for requirement in &function.callbacks {
+                if &requirement.ty == ty
+                    && requirement
+                        .parameters
+                        .iter()
+                        .all(|ty| bound(ty, &function.parameters, &bindings))
+                {
+                    callbacks.insert(
+                        requirement
+                            .parameters
+                            .iter()
+                            .map(|ty| substitute(ty, &bindings))
+                            .collect(),
+                    );
+                }
+            }
+            if function.body.is_some()
+                && self.lambda_probe.is_none()
+                && function
+                    .parameters
+                    .iter()
+                    .any(|parameter| parameter.text == *ty)
+                && !bindings.contains_key(ty)
+                && function.parameters.iter().all(|parameter| {
+                    parameter.text == *ty || bindings.contains_key(&parameter.text)
+                })
+                && let Some(signature) = self.probe_callback(id, ty, bindings)
+            {
+                callbacks.insert(signature);
+            }
+        }
+        (types, callbacks)
+    }
+
+    pub(super) fn resolve_shaped_call(
+        &mut self,
+        name: &str,
+        shape: &CallArguments<'_>,
+        values: &[Value],
+        expected: Option<&str>,
+        span: &Span,
+    ) -> Result<Option<(usize, Vec<usize>)>, String> {
+        enum Target {
+            Concrete(usize),
+            Generic(SelectedGeneric),
+        }
+        let mut candidates = Vec::new();
+        let mut errors = Vec::new();
+        let (concrete, generic) = self.shaped_candidates(name, values);
+        let mut matching_shape = false;
+        for (id, f) in concrete {
+            let names = self.keyword_parameters.get(&id).into_iter().flatten();
+            let slots = match shape.slots(f.params.len(), names) {
+                Ok(slots) => slots,
+                Err(error) => {
+                    errors.push(error);
+                    continue;
+                }
+            };
+            matching_shape = true;
+            if slots
+                .iter()
+                .zip(values)
+                .all(|(&slot, value)| access_types::same(&f.params[slot], &value.ty))
+                && (!return_selected(name)
+                    || expected.is_none_or(|ty| access_types::same(&f.result, ty)))
+            {
+                candidates.push((0, (Target::Concrete(id), slots)));
+            }
+        }
+        for (id, f) in generic {
+            let slots =
+                match shape.slots(f.arguments.len(), f.arguments.iter().map(|(name, _)| name)) {
+                    Ok(slots) => slots,
+                    Err(error) => {
+                        errors.push(error);
+                        continue;
+                    }
+                };
+            matching_shape = true;
+            if let Some(bindings) = self
+                .shaped_generic_bindings(f, name, &slots, values, expected)
+                .map_err(|()| span.error("native reference inference limit exceeded"))?
+                && f.parameters.iter().all(|p| bindings.contains_key(&p.text))
+            {
+                candidates.push((
+                    f.generic_argument_count(),
+                    (
+                        Target::Generic(SelectedGeneric {
+                            template: id,
+                            bindings,
+                        }),
+                        slots,
+                    ),
+                ));
+            }
+        }
+        let mut candidates = best_candidates(candidates);
+        if candidates.len() > 1 {
+            return Err(ambiguous_call(
+                name,
+                span,
+                false,
+                candidates.iter().map(|(target, _)| match target {
+                    Target::Concrete(id) => &self.functions[*id].name,
+                    Target::Generic(selected) => &self.generic_functions[selected.template].name,
+                }),
+            ));
+        }
+        if let Some((target, slots)) = candidates.pop() {
+            let id = match target {
+                Target::Concrete(id) => id,
+                Target::Generic(selected) => {
+                    self.instantiate_generic(selected, name, values, span)?
+                }
+            };
+            return Ok(Some((id, slots)));
+        }
+        if !matching_shape {
+            if let Some(error) = errors
+                .iter()
+                .find(|error| matches!(error, ArgumentMismatch::Missing(_)))
+            {
+                return Err(error.diagnostic(span));
+            }
+            if shape.has_keywords()
+                && let Some(error) = errors.first()
+            {
+                let error = errors
+                    .iter()
+                    .find(|error| matches!(error, ArgumentMismatch::PositionalCount))
+                    .unwrap_or(error);
+                return Err(error.diagnostic(span));
+            }
+        }
+        Ok(None)
+    }
+
     pub(super) fn argument_hints(
         &self,
         name: &str,
@@ -996,6 +1278,7 @@ impl Compiler {
             if !scopes.contains(&f.scope)
                 || f.name.text != lookup_base
                 || f.arguments.len() != args.len()
+                || f.arguments.iter().any(|(name, _)| name.keyword.is_some())
             {
                 continue;
             }
@@ -1135,6 +1418,20 @@ impl Compiler {
             origin: definition.origin,
             checked: None,
         });
+        if definition
+            .arguments
+            .iter()
+            .any(|(name, _)| name.keyword.is_some())
+        {
+            self.keyword_parameters.insert(
+                index,
+                definition
+                    .arguments
+                    .iter()
+                    .map(|(name, _)| name.clone())
+                    .collect(),
+            );
+        }
         self.generic_instances.insert(key, index);
         self.generic_calls.insert(index, span.clone());
         self.register_generic_instance_environment(index, template);
@@ -1291,7 +1588,7 @@ fn substitute_expr(expr: &mut Expr, bindings: &BTreeMap<String, String>) {
         ExprKind::Invoke(callee, args) => {
             substitute_expr(callee, bindings);
             for arg in args {
-                substitute_expr(arg, bindings);
+                substitute_expr(&mut arg.value, bindings);
             }
         }
         ExprKind::Array(items) | ExprKind::Tuple(items) => {
@@ -1318,7 +1615,7 @@ fn substitute_expr(expr: &mut Expr, bindings: &BTreeMap<String, String>) {
         ExprKind::Call(name, args) => {
             substitute_reference(name, bindings);
             for arg in args {
-                substitute_expr(arg, bindings);
+                substitute_expr(&mut arg.value, bindings);
             }
         }
         ExprKind::Var(n) if n.text.contains("::") => substitute_reference(n, bindings),
@@ -1368,8 +1665,15 @@ fn substitute_statement(stmt: &mut Stmt, bindings: &BTreeMap<String, String>) {
         }
         Stmt::UserFunction(_, parameters, arguments, result, body) => {
             let bindings = unshadowed_bindings(parameters, bindings);
-            for (_, ty) in arguments {
+            for (parameter, ty) in arguments {
                 substitute_name(ty, &bindings);
+                if let Some(ParameterDefault::Expression(default)) = parameter
+                    .keyword
+                    .as_mut()
+                    .and_then(|keyword| keyword.default.as_mut())
+                {
+                    substitute_expr(default, &bindings);
+                }
             }
             if let Some(ty) = result {
                 substitute_name(ty, &bindings);

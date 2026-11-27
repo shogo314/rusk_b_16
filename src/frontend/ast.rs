@@ -70,7 +70,19 @@ pub struct DeclaredName {
     pub binding: Option<BindingAnnotation>,
     pub access: Option<AccessAnnotation>,
     pub escape: Option<EscapeAnnotation>,
+    pub keyword: Option<Box<KeywordParameter>>,
 }
+
+#[derive(Clone, Debug)]
+pub struct KeywordParameter {
+    pub default: Option<ParameterDefault>,
+}
+#[derive(Clone, Debug)]
+pub enum ParameterDefault {
+    Expression(Box<Expr>),
+    Function(Name),
+}
+
 impl DeclaredName {
     pub fn plain(name: Name) -> Self {
         Self {
@@ -78,6 +90,7 @@ impl DeclaredName {
             binding: None,
             access: None,
             escape: None,
+            keyword: None,
         }
     }
 }
@@ -193,25 +206,76 @@ fn parameters(parameters: &g::Parameters<'_>) -> Result<Vec<(DeclaredName, Name)
                 .iter()
                 .map(|p| p.parameter.as_ref()),
         )
-        .map(|p| {
-            let Modifiers {
-                binding,
-                access,
-                escape,
-            } = annotations(&p.binding_modifiers)?;
-            let ty = type_name(&p.type_name);
-            Ok((
-                DeclaredName {
-                    name: name(&p.identifier),
-                    binding,
-                    access,
-                    escape,
-                },
-                ty,
-            ))
-        })
+        .map(parameter)
         .collect()
 }
+
+fn parameter(p: &g::Parameter<'_>) -> Result<(DeclaredName, Name), String> {
+    let Modifiers {
+        binding,
+        access,
+        escape,
+    } = annotations(&p.binding_modifiers)?;
+    Ok((
+        DeclaredName {
+            name: name(&p.identifier),
+            binding,
+            access,
+            escape,
+            keyword: None,
+        },
+        type_name(&p.type_name),
+    ))
+}
+
+fn function_parameters(
+    parameters: &g::FunctionParameters<'_>,
+) -> Result<Vec<(DeclaredName, Name)>, String> {
+    let Some(first) = &parameters.function_parameters_opt else {
+        return Ok(vec![]);
+    };
+    let mut result = vec![];
+    let mut star = None;
+    for item in std::iter::once(first.function_parameter.as_ref()).chain(
+        first
+            .function_parameters_opt_list
+            .iter()
+            .map(|item| item.function_parameter.as_ref()),
+    ) {
+        match item {
+            g::FunctionParameter::Star(item) => {
+                let span = Span::token(&item.star);
+                if star.is_some() {
+                    return Err(span.error("duplicate named-only parameter marker"));
+                }
+                star = Some((span, result.len()));
+            }
+            g::FunctionParameter::ParameterFunctionParameterOpt(item) => {
+                let (mut name, ty) = parameter(&item.parameter)?;
+                let default = item
+                    .function_parameter_opt
+                    .as_ref()
+                    .map(|tail| {
+                        expr(&tail.expr).map(|value| ParameterDefault::Expression(Box::new(value)))
+                    })
+                    .transpose()?;
+                if star.is_some() {
+                    name.keyword = Some(Box::new(KeywordParameter { default }));
+                } else if default.is_some() {
+                    return Err(name.span.error("only named parameters can have a default"));
+                }
+                result.push((name, ty));
+            }
+        }
+    }
+    if let Some((span, position)) = star
+        && position == result.len()
+    {
+        return Err(span.error("expected a named-only parameter after '*'"));
+    }
+    Ok(result)
+}
+
 fn name(n: &g::Identifier<'_>) -> Name {
     Name {
         constant: None,
@@ -385,6 +449,11 @@ pub struct Expr {
 const MAX_EXPRESSION_DEPTH: usize = 128;
 
 impl Expr {
+    pub(crate) fn omits_lambda_types(&self) -> bool {
+        matches!(&self.kind, ExprKind::Lambda(parameters, _)
+            if parameters.iter().any(|(_, ty)| ty.is_none()))
+    }
+
     fn check_depth(&self, depth: usize) -> Result<(), String> {
         if depth >= MAX_EXPRESSION_DEPTH {
             return Err(self.span.error(format!(
@@ -395,7 +464,7 @@ impl Expr {
         let check = |expr: &Expr| expr.check_depth(depth);
         match &self.kind {
             ExprKind::Literal(..) | ExprKind::Var(_) => {}
-            ExprKind::Array(items) | ExprKind::Tuple(items) | ExprKind::Call(_, items) => {
+            ExprKind::Array(items) | ExprKind::Tuple(items) => {
                 items.iter().try_for_each(check)?;
             }
             ExprKind::Field(owner, _)
@@ -412,9 +481,12 @@ impl Expr {
                 check(a)?;
                 check(b)?;
             }
+            ExprKind::Call(_, args) => {
+                args.iter().try_for_each(|arg| check(&arg.value))?;
+            }
             ExprKind::Invoke(callee, args) => {
                 check(callee)?;
-                args.iter().try_for_each(check)?;
+                args.iter().try_for_each(|arg| check(&arg.value))?;
             }
             ExprKind::Record(_, fields) => fields.iter().try_for_each(|(_, value)| check(value))?,
             ExprKind::CompareChain(first, rest) => {
@@ -496,13 +568,19 @@ pub enum ExprKind {
     Field(Box<Expr>, Name),
     Record(Name, Vec<(Name, Expr)>),
     Var(Name),
-    Call(Name, Vec<Expr>),
-    Invoke(Box<Expr>, Vec<Expr>),
+    Call(Name, Vec<Argument>),
+    Invoke(Box<Expr>, Vec<Argument>),
     Lambda(Vec<(DeclaredName, Option<Name>)>, Box<Expr>),
     Binary(String, Box<Expr>, Box<Expr>),
     Unary(String, Box<Expr>),
     Assign(String, Box<Expr>, Box<Expr>),
 }
+#[derive(Clone, Debug)]
+pub struct Argument {
+    pub label: Option<Name>,
+    pub value: Expr,
+}
+
 #[derive(Clone, Debug)]
 pub enum Initializer {
     Shared(Expr),
@@ -704,7 +782,7 @@ fn simple_stmt(s: &g::SimpleStatement<'_>) -> Result<Stmt, String> {
         ),
         g::SimpleStatement::ExternFn(x) => {
             let x = &x.extern_fn;
-            let params = parameters(&x.parameters)?;
+            let params = function_parameters(&x.function_parameters)?;
             let result = x.extern_fn_opt0.as_ref().map(|r| type_name(&r.type_name));
             let properties = props(&x.properties)?;
             if let Some(parameters) = &x.extern_fn_opt {
@@ -721,7 +799,7 @@ fn simple_stmt(s: &g::SimpleStatement<'_>) -> Result<Stmt, String> {
         }
         g::SimpleStatement::Function(x) => {
             let x = &x.function;
-            let params = parameters(&x.parameters)?;
+            let params = function_parameters(&x.function_parameters)?;
             Stmt::UserFunction(
                 name(&x.identifier),
                 x.function_opt
@@ -1307,7 +1385,7 @@ fn suffix(value: Expr, suffix: &g::Suffix<'_>) -> Result<Expr, String> {
         }
         g::Suffix::Invoke(x) => {
             let span = value.span.clone();
-            let args = list(&x.invoke.expr_list)?;
+            let args = call_arguments(&x.invoke)?;
             let kind = match value.kind {
                 ExprKind::Var(n) => ExprKind::Call(n, args),
                 _ => ExprKind::Invoke(Box::new(value), args),
@@ -1316,6 +1394,30 @@ fn suffix(value: Expr, suffix: &g::Suffix<'_>) -> Result<Expr, String> {
         }
     })
 }
+fn call_arguments(invoke: &g::Invoke<'_>) -> Result<Vec<Argument>, String> {
+    let Some(items) = &invoke.invoke_opt else {
+        return Ok(vec![]);
+    };
+    let items = &items.arguments;
+    std::iter::once(items.argument.as_ref())
+        .chain(
+            items
+                .arguments_list
+                .iter()
+                .map(|item| item.argument.as_ref()),
+        )
+        .map(|arg| {
+            Ok(Argument {
+                label: arg
+                    .argument_opt
+                    .as_ref()
+                    .map(|label| name(&label.argument_label.identifier)),
+                value: expr(&arg.expr)?,
+            })
+        })
+        .collect()
+}
+
 fn primary(e: &g::Primary<'_>) -> Result<Expr, String> {
     match e {
         g::Primary::Block(x) => block_expr(&x.block),

@@ -8,14 +8,19 @@ extern type<I, T> Enumerated {
     retains: "source:I",
 }
 
-/// 0から始まる添字と要素の組を遅延して返します。
-extern fn enumerate<S, I, T>(source: S) -> Enumerated<I, T> {
+/// 添字と要素の組を遅延して返します。
+extern fn enumerate<S, I, T>(source: S, *, start: Int = 0) -> Enumerated<I, T> {
     effects: "read_fresh",
-    code: "Obj<@{Enumerated<I,T>}> @{fn}(Obj<@{S}> source, Loc loc) { [[maybe_unused]] constexpr bool writes = @{writes __iter_next__(I)->T}; auto cursor = @{boxed_call __iter__(S)->I via (0) into return.source}(source, loc); return make_obj<@{Enumerated<I,T>}>({cursor, 0}); }",
+    code: "Obj<@{Enumerated<I,T>}> @{fn}(Obj<@{S}> source, Obj<@{Int}> start, Loc loc) { return @{boxed_call __enumerate__(S,Int)->Enumerated<I,T> via (0,1) into return}(source, start, loc); }",
 }
 
-/// 指定した添字から始めます。要素を取り出すたびに添字が1増えます。
+/// 開始添字を位置引数で渡す従来の形式です。
 extern fn enumerate<S, I, T>(source: S, start: Int) -> Enumerated<I, T> {
+    effects: "read_fresh",
+    code: "Obj<@{Enumerated<I,T>}> @{fn}(Obj<@{S}> source, Obj<@{Int}> start, Loc loc) { return @{boxed_call __enumerate__(S,Int)->Enumerated<I,T> via (0,1) into return}(source, start, loc); }",
+}
+
+extern fn __enumerate__<S, I, T>(source: S, start: Int) -> Enumerated<I, T> {
     effects: "read_fresh",
     code: "Obj<@{Enumerated<I,T>}> @{fn}(Obj<@{S}> source, Obj<@{Int}> start, Loc loc) { [[maybe_unused]] constexpr bool writes = @{writes __iter_next__(I)->T}; auto index = *start; auto cursor = @{boxed_call __iter__(S)->I via (0) into return.source}(source, loc); return make_obj<@{Enumerated<I,T>}>({cursor, index}); }",
 }

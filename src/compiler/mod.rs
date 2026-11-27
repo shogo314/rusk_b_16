@@ -1,12 +1,13 @@
 use crate::frontend::ast::{
-    Binding, BindingMode, Condition, DeclaredName, Expr, ExprKind, Initializer, Name, Pattern,
-    PatternKind, Span, Stmt,
+    Argument, Binding, BindingMode, Condition, DeclaredName, Expr, ExprKind, Initializer, Name,
+    ParameterDefault, Pattern, PatternKind, Span, Stmt,
 };
 use crate::ir::hir::{Body, Call, Instruction, Literal, Place, Rvalue, Value, ValueId};
 use context::{FunctionContext, LoopContext, Variable};
 use std::collections::{BTreeMap, BTreeSet};
 mod access_types;
 mod aggregate_operations;
+mod arguments;
 mod bindings;
 mod callables;
 mod context;
@@ -126,6 +127,9 @@ pub struct Compiler {
     generic_calls: BTreeMap<usize, Span>,
     implicit_calls: BTreeSet<String>,
     functions: Vec<Function>,
+    keyword_parameters: BTreeMap<usize, Vec<DeclaredName>>,
+    default_function_counter: usize,
+    default_functions: BTreeMap<usize, BTreeSet<usize>>,
     native_info: BTreeMap<usize, native_info::NativeFunctionInfo>,
     native_effect_queries: BTreeSet<(usize, crate::analysis::effects::Query)>,
     native_function_requests: BTreeMap<usize, crate::native::NativeRequests>,
@@ -186,13 +190,14 @@ impl Compiler {
         emit: crate::backend::Emit,
     ) -> Result<String, String> {
         use crate::diagnostics::{Stage, enter};
+        let sources = self.expand_source_defaults(sources);
         {
             let _stage = enter(Stage::Declarations);
-            self.register_declarations(sources)?;
+            self.register_declarations(&sources)?;
         }
         {
             let _stage = enter(Stage::TypeChecking);
-            self.prepare_bodies(sources)?;
+            self.prepare_bodies(&sources)?;
             self.validate_native_resource_requirements()?;
         }
         let mut hir = {
@@ -406,6 +411,7 @@ impl Compiler {
             .enumerate()
             .filter(|(index, f)| {
                 !self.generic_calls.contains_key(index)
+                    && !self.keyword_parameters.contains_key(index)
                     && self.aggregate_candidate(*index, &arguments)
                     && scopes.contains(&f.scope)
                     && f.name.text == lookup_name
@@ -498,14 +504,20 @@ impl Compiler {
                     .join(", ")
             ))
         })?;
+        self.emit_call(i, args, s)
+    }
+
+    fn emit_call(&mut self, i: usize, args: Vec<Value>, s: &Span) -> Result<Value, String> {
         self.used.insert(i);
-        let f = self.functions[i].clone();
+        let f = &self.functions[i];
+        debug_assert_eq!(f.params.len(), args.len());
         for (parameter, value) in f.params.iter().zip(&args) {
             self.same(parameter, &value.ty, s)?;
         }
+        let ty = f.result.clone();
         let result = Value {
             id: self.temp(),
-            ty: f.result.clone(),
+            ty,
         };
         self.context.pending_temps.push(result.id.clone());
         self.record_environment_site(result.id.clone(), s);
@@ -1232,26 +1244,7 @@ impl Compiler {
                     )?;
                     return self.invoke_arguments(callee, args, expected, &e.span);
                 }
-                let mut values = vec![];
-                for arg in args {
-                    // Use a context only when every remaining overload agrees.
-                    let hints = self.argument_hints(&n.text, args.len(), &values, expected);
-                    let builtin_hint = self.enum_argument_hint(&n.text, &values, expected);
-                    let hint = if hints.len() == 1 {
-                        hints.first().map(String::as_str)
-                    } else {
-                        builtin_hint.as_deref()
-                    };
-                    values.push(self.call_argument(
-                        arg,
-                        hint,
-                        &n.text,
-                        args.len(),
-                        &values,
-                        expected,
-                    )?);
-                }
-                self.call(&n.text, values, expected, &e.span)
+                self.source_call(&n.text, Vec::new(), args, expected, &e.span)
             }
             ExprKind::Binary(op, a, b) => {
                 let a = self.expr(a, None)?;

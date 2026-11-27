@@ -56,13 +56,13 @@ for doubled in values.map((readonly x: Int) => x * 2) {
 
 | API | 結果 |
 |---|---|
-| `enumerate(source)`・`enumerate(source, start)` | 各要素を`(Int, T)`で返す。既定の開始値は0 |
+| `enumerate(source)`・`enumerate(source, start: n)` | 各要素を`(Int, T)`で返す。既定の開始値は0 |
 | `zip(left, right)` | 左右2列の要素を`(A, B)`で返す |
 | `reversed(source)` | 配列、文字列、整数範囲を末尾から走査 |
 
 ```rusk
 let a := [2, 4];
-for (i, value) in a.enumerate(1) {
+for (i, value) in a.enumerate(start: 1) {
     value += i;
 }
 for pair in zip(a.reversed(), 0 .. 2) {
@@ -71,6 +71,8 @@ for pair in zip(a.reversed(), 0 .. 2) {
 ```
 
 出力は`6 0`、`3 1`です。取り出した配列要素と文字は元の値を共有します。範囲から取り出す整数とenumerateの添字はその都度作ります。Intの最大値を添字として返した後、さらに要素があれば実行時エラーです。
+
+開始添字を位置引数で渡す従来の `a.enumerate(1)` も使えます。
 
 zipは各位置で左、右の順に次の要素の有無を調べ、片方だけ終われば実行時エラーにします。両方に要素があれば左、右の順に取り出します。filterは有無の確認中にも候補を消費できます。短絡した走査では到達していない位置の長さを確認しません。左右には独立して進む走査状態を渡します。同じ配列を左右へ渡すと、配列を共有する別々の走査状態が作られます。
 

@@ -477,3 +477,20 @@ match true { ok if ok => { wt 8; } _ => {} }
         }
     }
 }
+
+#[test]
+fn enumerate_accepts_default_named_and_legacy_starts() {
+    runs(
+        r#"
+readonly let values := [3, 4];
+wt enumerate(values).to_vec();
+wt enumerate(values, start: 1).to_vec();
+wt values.enumerate(start: 1).to_vec();
+wt values.enumerate(1).to_vec();
+let iter := enumerate;
+wt iter(values).to_vec();
+wt iter(values, start: 2).to_vec();
+"#,
+        "0 3 1 4\n1 3 2 4\n1 3 2 4\n1 3 2 4\n0 3 1 4\n2 3 3 4\n",
+    );
+}
